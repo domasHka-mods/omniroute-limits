@@ -171,7 +171,9 @@ function formatReset(iso) {
   const mins = Math.round(ms / 60000);
   if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
-  return hrs < 24 ? `${hrs}h ${mins % 60}m` : `${Math.floor(hrs / 24)}d`;
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  const days = Math.floor(hrs / 24);
+  return hrs % 24 > 0 ? `${days}d ${hrs % 24}h` : `${days}d`;
 }
 
 export default class OmnirouteLimits extends View {
@@ -290,6 +292,8 @@ export default class OmnirouteLimits extends View {
           const modelPcts = [];
           const sPcts = [];
           const wPcts = [];
+          const sResets = [];
+          const wResets = [];
           const modelResets = [];
           for (const c of matchingConns) {
             const grp = (c.quotaGroups || []).find(
@@ -302,11 +306,11 @@ export default class OmnirouteLimits extends View {
             if (sVal !== null || wVal !== null) {
               if (sVal !== null) {
                 sPcts.push(sVal);
-                if (sq.resetAt) modelResets.push(sq.resetAt);
+                if (sq.resetAt) { sResets.push(sq.resetAt); modelResets.push(sq.resetAt); }
               }
               if (wVal !== null) {
                 wPcts.push(wVal);
-                if (wq.resetAt) modelResets.push(wq.resetAt);
+                if (wq.resetAt) { wResets.push(wq.resetAt); modelResets.push(wq.resetAt); }
               }
             } else {
               const q = c.quotas?.[bare] || c.quotas?.[m.id];
@@ -329,6 +333,8 @@ export default class OmnirouteLimits extends View {
           const sumPct = sumOf(modelPcts) ?? (wSum ?? sSum);
           const maxPct = modelPcts.length > 0 ? modelPcts.length * 100 : (wMax ?? sMax);
           const avgPct = sumPct !== null && maxPct ? (sumPct / maxPct) * 100 : null;
+          sResets.sort();
+          wResets.sort();
           modelResets.sort();
 
           const usage = byModel.find((u) => u.model === m.id || u.id === m.id || u.model === bare);
@@ -343,8 +349,10 @@ export default class OmnirouteLimits extends View {
             maxPct,
             sSum,
             sMax,
+            sReset: sResets[0] || null,
             wSum,
             wMax,
+            wReset: wResets[0] || null,
             percentRemaining: avgPct,
             resetAt: modelResets[0] || null,
           };
@@ -707,8 +715,14 @@ export default class OmnirouteLimits extends View {
               c.children(
                 rows.map((r, i) => {
                   const lines = [];
-                  if (r.sSum !== null) lines.push(`5h: ${r.sSum}/${r.sMax}%`);
-                  if (r.wSum !== null) lines.push(`7d: ${r.wSum}/${r.wMax}%`);
+                  if (r.sSum !== null) {
+                    const sr = formatReset(r.sReset);
+                    lines.push(`5h: ${r.sSum}/${r.sMax}%${sr ? ` (${sr})` : ""}`);
+                  }
+                  if (r.wSum !== null) {
+                    const wr = formatReset(r.wReset);
+                    lines.push(`7d: ${r.wSum}/${r.wMax}%${wr ? ` (${wr})` : ""}`);
+                  }
                   if (lines.length === 0) {
                     lines.push(r.sumPct !== null && r.maxPct !== null ? `${r.sumPct}/${r.maxPct}%` : "—");
                   }
@@ -766,14 +780,34 @@ export default class OmnirouteLimits extends View {
                       if (typeof w.total === "number" && w.total > 0) return ((w.total - (w.used ?? 0)) / w.total) * 100;
                       return null;
                     };
-                    const grpSessions = (p.quotaGroups || []).map((g) => winPct(g.windows?.session)).filter((v) => v !== null);
-                    const grpWeeklies = (p.quotaGroups || []).map((g) => winPct(g.windows?.weekly)).filter((v) => v !== null);
-                    const sVal = grpSessions.length > 0 ? Math.min(...grpSessions) : winPct(p.quotas?.session);
-                    const wVal = grpWeeklies.length > 0 ? Math.min(...grpWeeklies) : winPct(p.quotas?.weekly);
+                    const grpSessions = (p.quotaGroups || []).map((g) => g.windows?.session).filter(Boolean);
+                    const grpWeeklies = (p.quotaGroups || []).map((g) => g.windows?.weekly).filter(Boolean);
+                    const pickMin = (arr) => {
+                      let best = null;
+                      let bestVal = Infinity;
+                      for (const w of arr) {
+                        const v = winPct(w);
+                        if (v !== null && v < bestVal) { bestVal = v; best = w; }
+                      }
+                      return best;
+                    };
+                    const sWin = grpSessions.length > 0 ? pickMin(grpSessions) : p.quotas?.session;
+                    const wWin = grpWeeklies.length > 0 ? pickMin(grpWeeklies) : p.quotas?.weekly;
+                    const sVal = winPct(sWin);
+                    const wVal = winPct(wWin);
                     const lines = [];
-                    if (typeof sVal === "number") lines.push(`5h: ${Math.round(sVal)}%`);
-                    if (typeof wVal === "number") lines.push(`7d: ${Math.round(wVal)}%`);
-                    if (lines.length === 0) lines.push(`${Math.round(p.percentRemaining ?? 0)}%`);
+                    if (typeof sVal === "number") {
+                      const sr = formatReset(sWin?.resetAt);
+                      lines.push(`5h: ${Math.round(sVal)}%${sr ? ` (${sr})` : ""}`);
+                    }
+                    if (typeof wVal === "number") {
+                      const wr = formatReset(wWin?.resetAt);
+                      lines.push(`7d: ${Math.round(wVal)}%${wr ? ` (${wr})` : ""}`);
+                    }
+                    if (lines.length === 0) {
+                      const pr = formatReset(p.resetAt);
+                      lines.push(`${Math.round(p.percentRemaining ?? 0)}%${pr ? ` (${pr})` : ""}`);
+                    }
                     const sub = [p.provider, p.plan].filter(Boolean).join(" · ");
                     return h_flex()
                       .id(`p-${i}`)
