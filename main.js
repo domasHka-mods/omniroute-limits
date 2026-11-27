@@ -673,7 +673,7 @@ export default class OmnirouteLimits extends View {
                   .hover((s) => s.bg(t.hover))
                   .on_click((_e, c) => this.toggleModel(m.id, c))
                   .child(div().text_color(on ? t.accent : t.dim).child(on ? "[x]" : "[ ]"))
-                  .child(div().flex_1().truncate().child(m.name));
+                  .child(div().flex_1().truncate().child(m.id));
               })
             )
         );
@@ -754,7 +754,7 @@ export default class OmnirouteLimits extends View {
                         .flex_1()
                         .min_w(0)
                         .gap(2)
-                        .child(div().truncate().child(r.name))
+                        .child(div().truncate().child(r.id))
                         .when(Boolean(meta), (m) => m.child(div().text_size(10.5).text_color(t.dim).child(meta)))
                     )
                     .child(
