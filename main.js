@@ -64,20 +64,27 @@ function parseJsonc(text) {
   return JSON.parse(clean);
 }
 
-async function loadUserModels() {
+async function loadOpencodeConfig() {
   try {
     const sep = home().includes("\\") ? "\\" : "/";
     const raw = await readTextFile(`${home()}${sep}.config${sep}opencode${sep}opencode.jsonc`);
     const cfg = parseJsonc(raw);
-    const models = cfg?.provider?.omniroute?.models;
-    if (!models || typeof models !== "object") return [];
-    return Object.entries(models).map(([id, m]) => ({
-      id,
-      name: m?.name || id,
-    }));
+    const omni = cfg?.provider?.omniroute;
+    const models = omni?.models && typeof omni.models === "object"
+      ? Object.entries(omni.models).map(([id, m]) => ({ id, name: m?.name || id }))
+      : [];
+    return { models, apiKey: omni?.options?.apiKey || "" };
   } catch {
-    return [];
+    return { models: [], apiKey: "" };
   }
+}
+
+function formatTokens(n) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "0";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(n);
 }
 
 async function apiGet(baseUrl, path, token) {
@@ -225,13 +232,41 @@ export default class OmnirouteLimits extends View {
         return;
       }
       try {
-        const [quota, providerLimits, analytics, rateLimits, userModels] = await Promise.all([
+        const [quota, providerLimits, analytics, rateLimits, keysRes, ocCfg] = await Promise.all([
           apiGet(url, "/api/usage/quota", token),
           apiGet(url, "/api/usage/provider-limits", token).catch(() => ({})),
           apiGet(url, "/api/usage/analytics?range=1d", token).catch(() => ({})),
           apiGet(url, "/api/rate-limits", token).catch(() => ({})),
-          loadUserModels(),
+          apiGet(url, "/api/keys", token).catch(() => ({})),
+          loadOpencodeConfig(),
         ]);
+        const userModels = ocCfg.models;
+        const userApiKey = ocCfg.apiKey;
+        const keysList = Array.isArray(keysRes?.keys) ? keysRes.keys : [];
+        const matchedKey = userApiKey
+          ? keysList.find((k) => {
+              const parts = (k.key || "").split("*").filter(Boolean);
+              return parts.length >= 2
+                ? userApiKey.startsWith(parts[0]) && userApiKey.endsWith(parts[parts.length - 1])
+                : userApiKey.startsWith(parts[0] || "__");
+            })
+          : null;
+        const keyBudget = matchedKey
+          ? await apiGet(url, `/api/usage/budget?apiKeyId=${encodeURIComponent(matchedKey.id)}`, token).catch(() => null)
+          : null;
+        const byApiKey = Array.isArray(analytics?.byApiKey) ? analytics.byApiKey : [];
+        const keyStats = matchedKey ? byApiKey.find((k) => k.apiKeyId === matchedKey.id) : null;
+        const myUsage = matchedKey
+          ? {
+              name: matchedKey.name || "Me",
+              requests: keyStats?.requests ?? 0,
+              totalTokens: keyStats?.totalTokens ?? 0,
+              costToday: keyBudget?.totalCostToday ?? keyStats?.cost ?? 0,
+              costMonth: keyBudget?.totalCostMonth ?? 0,
+              dailyLimit: keyBudget?.dailyLimitUsd || 0,
+              monthlyLimit: keyBudget?.monthlyLimitUsd || 0,
+            }
+          : null;
 
         const providers = Array.isArray(quota?.providers) ? quota.providers : [];
         const caches = providerLimits?.caches || {};
@@ -376,6 +411,7 @@ export default class OmnirouteLimits extends View {
           totalRem: totalMax > 0 ? totalRem : null,
           totalMax: totalMax > 0 ? totalMax : null,
           budget,
+          myUsage,
           allModels,
           modelRows,
           providers: enrichedProviders.filter((p) => typeof p.percentRemaining === "number"),
@@ -696,6 +732,37 @@ export default class OmnirouteLimits extends View {
             .when(!this.loading && data?.status === "ok" && rows.length === 0 && providers.length === 0, (c) =>
               c.child(div().text_color(t.muted).child("Connected. No active models or provider quotas returned."))
             )
+            .when(Boolean(data?.myUsage), (c) => {
+              const u = data.myUsage;
+              const todayStr = u.dailyLimit > 0
+                ? `$${Number(u.costToday).toFixed(2)} / $${Number(u.dailyLimit).toFixed(2)}`
+                : `$${Number(u.costToday).toFixed(2)}`;
+              const monthStr = u.monthlyLimit > 0
+                ? `$${Number(u.costMonth).toFixed(2)} / $${Number(u.monthlyLimit).toFixed(2)}`
+                : `$${Number(u.costMonth).toFixed(2)}`;
+              return c.child(
+                h_flex()
+                  .justify_between()
+                  .items_center()
+                  .p(8)
+                  .rounded(6)
+                  .bg(t.surface)
+                  .child(
+                    v_flex()
+                      .gap(2)
+                      .child(div().font_semibold().child(`My Usage (${u.name})`))
+                      .child(div().text_size(10.5).text_color(t.dim).child(`${u.requests} req · ${formatTokens(u.totalTokens)} tok (24h)`))
+                  )
+                  .child(
+                    v_flex()
+                      .items_end()
+                      .gap(2)
+                      .font_semibold()
+                      .child(div().child(`24h: ${todayStr}`))
+                      .child(div().text_size(10.5).text_color(t.muted).child(`30d: ${monthStr}`))
+                  )
+              );
+            })
             .when(typeof data?.budget?.limit === "number", (c) =>
               c.child(
                 h_flex()
