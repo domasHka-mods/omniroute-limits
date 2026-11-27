@@ -251,20 +251,15 @@ export default class OmnirouteLimits extends View {
                 : userApiKey.startsWith(parts[0] || "__");
             })
           : null;
-        const keyBudget = matchedKey
-          ? await apiGet(url, `/api/usage/budget?apiKeyId=${encodeURIComponent(matchedKey.id)}`, token).catch(() => null)
-          : null;
         const byApiKey = Array.isArray(analytics?.byApiKey) ? analytics.byApiKey : [];
         const keyStats = matchedKey ? byApiKey.find((k) => k.apiKeyId === matchedKey.id) : null;
         const myUsage = matchedKey
           ? {
               name: matchedKey.name || "Me",
               requests: keyStats?.requests ?? 0,
+              promptTokens: keyStats?.promptTokens ?? 0,
+              completionTokens: keyStats?.completionTokens ?? 0,
               totalTokens: keyStats?.totalTokens ?? 0,
-              costToday: keyBudget?.totalCostToday ?? keyStats?.cost ?? 0,
-              costMonth: keyBudget?.totalCostMonth ?? 0,
-              dailyLimit: keyBudget?.dailyLimitUsd || 0,
-              monthlyLimit: keyBudget?.monthlyLimitUsd || 0,
             }
           : null;
 
@@ -734,12 +729,6 @@ export default class OmnirouteLimits extends View {
             )
             .when(Boolean(data?.myUsage), (c) => {
               const u = data.myUsage;
-              const todayStr = u.dailyLimit > 0
-                ? `$${Number(u.costToday).toFixed(2)} / $${Number(u.dailyLimit).toFixed(2)}`
-                : `$${Number(u.costToday).toFixed(2)}`;
-              const monthStr = u.monthlyLimit > 0
-                ? `$${Number(u.costMonth).toFixed(2)} / $${Number(u.monthlyLimit).toFixed(2)}`
-                : `$${Number(u.costMonth).toFixed(2)}`;
               return c.child(
                 h_flex()
                   .justify_between()
@@ -751,15 +740,15 @@ export default class OmnirouteLimits extends View {
                     v_flex()
                       .gap(2)
                       .child(div().font_semibold().child(`My Usage (${u.name})`))
-                      .child(div().text_size(10.5).text_color(t.dim).child(`${u.requests} req · ${formatTokens(u.totalTokens)} tok (24h)`))
+                      .child(div().text_size(10.5).text_color(t.dim).child(`${u.requests} req (24h)`))
                   )
                   .child(
                     v_flex()
                       .items_end()
                       .gap(2)
                       .font_semibold()
-                      .child(div().child(`24h: ${todayStr}`))
-                      .child(div().text_size(10.5).text_color(t.muted).child(`30d: ${monthStr}`))
+                      .child(div().child(`${formatTokens(u.totalTokens)} tok`))
+                      .child(div().text_size(10.5).text_color(t.muted).child(`in ${formatTokens(u.promptTokens)} · out ${formatTokens(u.completionTokens)}`))
                   )
               );
             })
