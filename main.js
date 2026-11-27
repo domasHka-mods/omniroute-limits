@@ -235,12 +235,13 @@ export default class OmnirouteLimits extends View {
         return;
       }
       try {
-        const [quota, providerLimits, analytics, rateLimits, keysRes, ocCfg] = await Promise.all([
+        const [quota, providerLimits, analytics, rateLimits, keysRes, modelsRes, ocCfg] = await Promise.all([
           apiGet(url, "/api/usage/quota", token),
           apiGet(url, "/api/usage/provider-limits", token).catch(() => ({})),
           apiGet(url, "/api/usage/analytics?range=1d", token).catch(() => ({})),
           apiGet(url, "/api/rate-limits", token).catch(() => ({})),
           apiGet(url, "/api/keys", token).catch(() => ({})),
+          apiGet(url, "/v1/models", token).catch(() => ({})),
           loadOpencodeConfig(),
         ]);
         const userModels = ocCfg.models;
@@ -293,10 +294,44 @@ export default class OmnirouteLimits extends View {
           };
         });
 
-        const allModels =
-          userModels.length > 0
-            ? userModels
-            : byModel.map((m) => ({ id: m.model || m.id || "unknown", name: m.model || m.id || "unknown" }));
+        const cxModels = Array.isArray(modelsRes?.data)
+          ? modelsRes.data
+              .filter((m) => m && typeof m.id === "string" && m.id.startsWith("cx/"))
+              .map((m) => ({ id: m.id, name: m.id }))
+          : [];
+
+        const fallbackModels = [];
+        const seenModels = new Set();
+        for (const m of byModel) {
+          const id = m.model || m.id || "unknown";
+          if (!seenModels.has(id)) {
+            seenModels.add(id);
+            fallbackModels.push({ id, name: id });
+          }
+        }
+        const cacheModelIds = new Set();
+        for (const p of enrichedProviders) {
+          for (const g of p.quotaGroups || []) {
+            for (const id of g.models || []) cacheModelIds.add(id);
+          }
+          for (const k of Object.keys(p.quotas || {})) {
+            if (k.includes("-") || k.includes("/")) cacheModelIds.add(k);
+          }
+        }
+        for (const id of [...cacheModelIds].sort()) {
+          if (!seenModels.has(id)) {
+            seenModels.add(id);
+            fallbackModels.push({ id, name: id });
+          }
+        }
+        for (const m of cxModels) {
+          if (!seenModels.has(m.id)) {
+            seenModels.add(m.id);
+            fallbackModels.push(m);
+          }
+        }
+
+        const allModels = userModels.length > 0 ? userModels : fallbackModels;
 
         const targetModels =
           selectedModels && selectedModels.length > 0
