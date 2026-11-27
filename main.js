@@ -155,9 +155,12 @@ function openBrowser(url) {
 
 const PREFIX_ALIASES = {
   agy: ["antigravity", "agy"],
+  cx: ["codex", "openai"],
   gpt: ["codex", "openai", "gpt"],
   claude: ["claude", "anthropic"],
+  cc: ["claude", "anthropic"],
   gemini: ["gemini", "google"],
+  gc: ["gemini", "google"],
 };
 
 function matchProvider(modelId, providers) {
