@@ -304,15 +304,29 @@ export default class OmnirouteLimits extends View {
             : allModels;
 
         const modelRows = targetModels.map((m) => {
-          const bare = m.id.includes("/") ? m.id.split("/").slice(1).join("/") : m.id;
-          const prefix = m.id.includes("/") ? m.id.split("/")[0].toLowerCase() : m.id.split("-")[0].toLowerCase();
+          const hasSlash = m.id.includes("/");
+          const bare = hasSlash ? m.id.split("/").slice(1).join("/") : m.id;
+          const prefix = hasSlash ? m.id.split("/")[0].toLowerCase() : m.id.split("-")[0].toLowerCase();
           const aliases = PREFIX_ALIASES[prefix] || [prefix];
 
+          // Bare model IDs (e.g. from analytics) may belong to agy rather than gemini/claude; prefer connections that list the model.
+          const explicitConns = !hasSlash
+            ? enrichedProviders.filter(
+                (p) =>
+                  (p.quotaGroups || []).some(
+                    (g) => Array.isArray(g.models) && (g.models.includes(bare) || g.models.includes(m.id))
+                  ) || Boolean(p.quotas?.[bare] || p.quotas?.[m.id])
+              )
+            : [];
+
           // Collect per-model quota across all matching provider connections
-          const matchingConns = enrichedProviders.filter((p) => {
-            const prov = (p.provider || "").toLowerCase();
-            return aliases.some((a) => prov.includes(a)) || (prov && m.id.toLowerCase().includes(prov));
-          });
+          const matchingConns =
+            explicitConns.length > 0
+              ? explicitConns
+              : enrichedProviders.filter((p) => {
+                  const prov = (p.provider || "").toLowerCase();
+                  return aliases.some((a) => prov.includes(a)) || (prov && m.id.toLowerCase().includes(prov));
+                });
 
           const winPct = (w) => {
             if (!w || typeof w !== "object") return null;
